@@ -3,13 +3,13 @@ include <BOSL2/std.scad>
 ENC = [200, 120, 90]; // Dimensions of the enclosure
 WALL = 3; // Wall thickness
 CH = 1; // Chamfer size
-LID_LIP = 10; // Lid wedge size
+LID_LIP = 9; // Lid wedge size
 LID_CLEARANCE = 0.4; // Clearance for the lid to fit
 
 $fn = 100;
 epsilon = 0.001;
 
-//base();
+base();
 
 LID_INPLACE = [WALL+LID_CLEARANCE/2, WALL+LID_CLEARANCE/2, ENC.z-WALL]; // Position for the lid to be in place
 LID_BESIDE = [0, -ENC.y, 0]; // Position for the lid to be beside the enclosure
@@ -32,18 +32,20 @@ module base() {
     }
 
     // Left wall
-    difference() {
-        cuboid([WALL, ENC.y, ENC.z], anchor = BOTTOM+LEFT+FRONT, chamfer=CH, except=RIGHT);
-    }
+    cuboid([WALL, ENC.y, ENC.z], anchor = BOTTOM+LEFT+FRONT, chamfer=CH, except=RIGHT);
 
     // Right wall
-    right(ENC.x - WALL) cuboid([WALL, ENC.y, ENC.z], anchor = BOTTOM+LEFT+FRONT, chamfer=CH, except=LEFT);
+    difference() {
+        right(ENC.x - WALL) cuboid([WALL, ENC.y, ENC.z], anchor = BOTTOM+LEFT+FRONT, chamfer=CH, except=LEFT);
+        // Barral socket cutout
+        up(ENC.z - 25) right(ENC.x+epsilon) back(25) rotate([90, 0, 90]) cyl(d=12, h=WALL+2*epsilon, anchor=TOP);
+    }
 
     // Front wall
     difference() {
         cuboid([ENC.x, WALL, ENC.z], anchor = BOTTOM+LEFT+FRONT, chamfer=CH, except=BACK);
-        // LED cutout
-        up(ENC.z/2) right(ENC.x/2) back(WALL/2) rotate([90, 0, 0]) cyl(d=5, h=WALL+2*epsilon);
+        // 3.5mm socket cutout
+        up(ENC.z / 2) right(ENC.x - 25) fwd(epsilon) rotate([90, 0, 0]) cyl(d=8, h=WALL+2*epsilon, anchor=TOP);
     }
 
     // Back wall
@@ -72,7 +74,7 @@ module base() {
         }
         up((ENC.z - SCREEN_CUTOUT.z)/2) right(SCREEN_X_OFFSET) fwd(epsilon)
             cuboid(SCREEN_CUTOUT, anchor = BOTTOM+LEFT+FRONT);
-        SWITCH_DIAM = 19;
+        SWITCH_DIAM = 20;
         up(ENC.z/4) back(WALL+epsilon) rotate([90, 0, 0]) {
             right(ENC.x - 30) cylinder(d=SWITCH_DIAM, h=WALL + 2*epsilon);
             right(ENC.x - 60) cylinder(d=SWITCH_DIAM, h=WALL + 2*epsilon);
@@ -96,8 +98,8 @@ module base() {
         }
         // Chamfer the edges
         LIP_CHAMFER = 2;
-        translate([LID_LIP-LIP_CHAMFER+WALL, LID_LIP-LIP_CHAMFER, epsilon])
-            cuboid([ENC.x-WALL*2-LID_LIP*2+LIP_CHAMFER*2, ENC.y-WALL-LID_LIP*2+LIP_CHAMFER*2, LID_LIP], anchor = TOP+LEFT+FRONT);
+        translate([LID_LIP-LIP_CHAMFER+WALL, LID_LIP-LIP_CHAMFER+WALL, epsilon])
+            cuboid([ENC.x-WALL*2-LID_LIP*2+LIP_CHAMFER*2, ENC.y-WALL*2-LID_LIP*2+LIP_CHAMFER*2, LID_LIP], anchor = TOP+LEFT+FRONT);
         // M3 screw holes
         for (x=[WALL + 4, ENC.x - WALL - 4]) {
             for (y=[WALL + 4, ENC.y - WALL - 4]) {
@@ -128,7 +130,6 @@ module lid() {
 
 
 module hex_holes(SIZE, diameter=10) {
-    //x_spacing = diameter * sqrt(3); // Hexagonal grid spacing
     x_spacing = diameter * sqrt(3)/2 + 4; // Hexagonal grid spacing
     y_spacing = diameter; // Hexagonal grid spacing
     x_under = (SIZE.x - 2*diameter) % x_spacing; // Width grid falls short of the enclosure width
