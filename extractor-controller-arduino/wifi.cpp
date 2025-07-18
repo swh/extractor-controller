@@ -66,13 +66,13 @@ void connectToWiFi() {
   }
 
   // attempt to connect to WiFi network:
+  wifiStatus = WiFi.begin(SSID_NAME, SSID_PASSWORD);
   while (wifiStatus != WL_CONNECTED) {
-    lcdMessage("Connecting to", ssid);
-    // Connect to WPA/WPA2 network.
-    wifiStatus = WiFi.begin(ssid, pass);
-    // Give it 5 seconds to connect, if not, retry
-    delay(5000);
+      delay(1000); // waiting for the connection
+      wifiStatus = WiFi.status();
   }
+  lcdMessage("Connected");
+  delay(1000);
 
   printWifiStatus();
 }

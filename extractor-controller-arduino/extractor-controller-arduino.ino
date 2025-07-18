@@ -5,6 +5,7 @@
 #include <IRremote.hpp>
 #include <RTC.h>
 #include <WiFiS3.h>
+#include <ArduinoHA.h>
 
 #include "wifi.h"
 
@@ -20,7 +21,7 @@
 #define EXT_UP 1
 #define EXT_OFF 2
 
-/* How often to fire the data callback */
+/* How often to send data to HA */
 const unsigned long MILLIS_MINUTE = 60*1000;
 unsigned long next_timer = MILLIS_MINUTE;
 
@@ -32,9 +33,24 @@ float c1_history[HISTORY_BUFFER];
 /* PIR must have been activated in this time for fans to turn on */
 const unsigned long PIR_WINDOW = 60 * MILLIS_MINUTE;
 
+/* Temperature & humidty sensor */
 DHTStable DHT;
 
+/* 20x4 LCD screen */
 LiquidCrystal_I2C lcd(0x20, 20, 4);
+
+/* Home Assitant */
+HADevice device;
+WiFiClient client;
+HAMqtt mqtt(client, device);
+HASensorNumber tempSensor("ecTemp", HASensorNumber::PrecisionP1);
+HASensorNumber humidSensor("ecHumid", HASensorNumber::PrecisionP1);
+HASensorNumber fanSpeed("ecFanspeed");
+HASensorNumber pc1("ecPc1", HASensorNumber::PrecisionP2);
+HASensorNumber pc4("ecPc4", HASensorNumber::PrecisionP2);
+HASensorNumber pc2_5("ecPc25", HASensorNumber::PrecisionP2);
+HASensorNumber pc10("ecPc10", HASensorNumber::PrecisionP2);
+HAButton fanButton("ecFanbutton");
 
 uint64_t rawDataOn[] =  {0xFF20B004CF30FF00, 0x20B004CF30FF00};
 uint64_t rawDataOff[] = {0xFF20B0046F90FF00, 0x20B0046F90FF00};
@@ -72,6 +88,18 @@ void lcdMessage(char *l1, char *l2=NULL, char *l3=NULL, char *l4=NULL) {
     }
   }
   Serial.println("");
+}
+
+void onFanOverride(HAButton* sender) {
+  if (fan_override == 0) {
+    fan_override = 2;
+    fan_override_start = millis();
+    fan_override_end = fan_override_start + MILLIS_MINUTE;
+  } else {
+    fan_override = 0;
+    fan_override_start = millis();
+    fan_override_end = fan_override_start;
+  }
 }
 
 void setup() {
@@ -156,19 +184,41 @@ void setup() {
 
   IrSender.begin(IRLEDPIN);
 
-  connectToWiFi();
-
   delay(1000);
 
   attachInterrupt(digitalPinToInterrupt(PASIRPIN), passiveIRInt, RISING);
   attachInterrupt(digitalPinToInterrupt(OVERRIDESWPIN), overrideSwitchInt, FALLING);
   attachInterrupt(digitalPinToInterrupt(CLEANSWPIN), cleanSwitchInt, FALLING);
 
+  /* Setup Home Assistant */
   byte mac[WL_MAC_ADDR_LENGTH];
   WiFi.macAddress(mac);
   device.setUniqueId(mac, sizeof(mac));
+  device.setName("ExtractorController");
+  device.setSoftwareVersion("1.0.0");
+  tempSensor.setIcon("mdi:thermometer");
+  tempSensor.setName("Temperature");
+  tempSensor.setUnitOfMeasurement("°C");
+  humidSensor.setIcon("mdi:water");
+  humidSensor.setName("Relative humidity");
+  humidSensor.setUnitOfMeasurement("%");
+  fanSpeed.setIcon("mdi:fan");
+  fanSpeed.setName("Fan speed");
+  pc1.setIcon("mdi:air-filter");
+  pc1.setName("PC1");
+  pc2_5.setIcon("mdi:air-filter");
+  pc2_5.setName("PC2.5");
+  pc4.setIcon("mdi:air-filter");
+  pc4.setName("PC4");
+  pc10.setIcon("mdi:air-filter");
+  pc10.setName("PC10");
+  fanButton.setIcon("mdi:fan");
+  fanButton.setName("Fan override");
+  fanButton.onCommand(onFanOverride);
 
-  lcdMessage("Initialisation complete");
+  mqtt.begin("192.168.178.124", MQTT_USERNAME, MQTT_PASSWORD);
+
+  lcdMessage("Initialisation", "complete");
 }
 
 void format_val(char *s, double val, int width, int padding) {
@@ -250,13 +300,16 @@ void extractor_fan(int op) {
     sprintf(output, "Fan speed %d/3", ext_fan_speed);
     lcdMessage(output);
     IrSender.sendPulseDistanceWidthFromArray(38, 8750, 4350, 700, 1650, 1150, 500, data, 119, PROTOCOL_IS_LSB_FIRST, 100, 0);
+    fanSpeed.setValue((unsigned long)ext_fan_speed);
     delay(100);
     digitalWrite(INDLEDPIN, LOW);
   }
 }
 
-void readingsCallback() {
+void sendReadings() {
   checkWiFiConnection();
+
+  Serial.println("Sending data to HA");
 
   char *sizes[] = {"C1", "C2.5", "C4", "C10"};
   for (int i=0; i<4; i++) {
@@ -278,6 +331,14 @@ void readingsCallback() {
     Serial.print(" ");
   }
   Serial.println("");
+
+  tempSensor.setValue(temperature);
+  humidSensor.setValue(relative_humidity);
+  fanSpeed.setValue((unsigned long)ext_fan_speed);
+  pc1.setValue(particle_counts[0]);
+  pc2_5.setValue(particle_counts[1]);
+  pc4.setValue(particle_counts[2]);
+  pc10.setValue(particle_counts[3]);
 }
 
 void passiveIRInt() {
@@ -308,6 +369,7 @@ int inTimerange(unsigned long time, unsigned long start, unsigned long end) {
   return 0;
 }
 
+
 void loop() {
   struct sps30_measurement m;
   char serial[SPS30_MAX_SERIAL_LEN];
@@ -315,6 +377,8 @@ void loop() {
   int16_t ret;
   const char *keys[] = {"  1", "2.5", "  4", " 10"};
   const unsigned long now = millis();
+
+  mqtt.loop();
 
   do {
     ret = sps30_read_data_ready(&data_ready); 
@@ -395,7 +459,6 @@ void loop() {
 
   float c1 = particle_counts[0];
 
-
   unsigned int minuites = (now / MILLIS_MINUTE);
   //unsigned int next_minute = (minuites + 1) % HISTORY_BUFFER;
   unsigned int this_minute = (minuites) % HISTORY_BUFFER;
@@ -439,11 +502,6 @@ void loop() {
     extractor_fan(EXT_OFF);
   }
 
-  if (now > next_timer) {
-    next_timer += MILLIS_MINUTE;
-    readingsCallback();
-  }
-
   if (passive_ir) {
     digitalWrite(INDLEDPIN, HIGH);
     Serial.println("Passive IR triggered");
@@ -460,14 +518,14 @@ void loop() {
       lcdMessage("Fan override", "cancel");
       fan_override = 0;
       fan_override_start = now;
-      fan_override_end = now;
+      fan_override_end = now + 4 * MILLIS_MINUTE;
       delay(200);
       digitalWrite(INDLEDPIN, LOW);
     } else {
       lcdMessage("Fan override");
       fan_override = 2;
       fan_override_start = now + 1;
-      fan_override_end = now + 3600 * 1000;
+      fan_override_end = now + 60 * MILLIS_MINUTE;
       delay(200);
       digitalWrite(INDLEDPIN, LOW);
     }
@@ -476,6 +534,12 @@ void loop() {
   if (digitalRead(CLEANSWPIN) == 0) {
     lcdMessage("SPS30 cleaning");
     sps30_start_manual_fan_cleaning();
+  }
+
+  if (now > next_timer) {
+    next_timer += MILLIS_MINUTE;
+
+    sendReadings();
   }
 
   delay(2000);
