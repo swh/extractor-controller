@@ -12,23 +12,35 @@ epsilon = 0.001;
 base();
 
 LID_INPLACE = [WALL+LID_CLEARANCE/2, WALL+LID_CLEARANCE/2, ENC.z-WALL]; // Position for the lid to be in place
-LID_BESIDE = [0, -ENC.y, 0]; // Position for the lid to be beside the enclosure
+LID_BESIDE = [WALL+LID_CLEARANCE/2, -ENC.y + WALL, 0]; // Position for the lid to be beside the enclosure
 
 translate(LID_BESIDE)
     lid();
 
 module base() {
+    SPS30 = [40.6, 12.2, 10];
+    FRAME = [4, 4, 0];
+    MOUNT = [4, 2, 0];
     // Base
     difference() {
         BASE = [ENC.x, ENC.y, WALL];
         cuboid(BASE, anchor = BOTTOM+LEFT+FRONT, chamfer=CH, except=TOP);
         hex_holes(BASE, diameter=10);
+        // Space for the PIR sensor
         translate([WALL, WALL, -epsilon]) cuboid([36, 36, WALL+2*epsilon], anchor = BOTTOM+LEFT+FRONT);
+        // Space for the SPS30 sensor
+        translate([ENC.x/2, WALL, -epsilon]) cuboid(SPS30, anchor = BOTTOM+FRONT);
     }
     // PIR mount
     difference() {
         translate([WALL, WALL, 0]) cuboid([36, 36, WALL], anchor = BOTTOM+LEFT+FRONT);
         translate([WALL+18, WALL+18, -2*epsilon]) cyl(d=23, h=WALL + 4*epsilon, anchor = BOTTOM, chamfer=-CH);
+    }
+    // SPS30 mount
+    difference() {
+        translate([ENC.x/2, WALL-FRAME.y/2, 0]) cuboid(SPS30 + FRAME, anchor = BOTTOM+FRONT);
+        translate([ENC.x/2, WALL, 1+epsilon]) cuboid(SPS30, anchor = BOTTOM+FRONT);
+        translate([ENC.x/2, WALL, -epsilon]) cuboid(SPS30-MOUNT, anchor = BOTTOM+FRONT);
     }
 
     // Left wall
@@ -61,7 +73,7 @@ module base() {
             for (x = [SCREEN_X_OFFSET + SCREEN_CUTOUT.x/2 - SCREEN_MOUNT_X/2, SCREEN_X_OFFSET + SCREEN_CUTOUT.x/2 + SCREEN_MOUNT_X/2]) {
                 for (z = [ENC.z/2 - SCREEN_MOUNT_Z/2, ENC.z/2 + SCREEN_MOUNT_Z/2]) {
                     translate([x, 0, z]) rotate([90, 0, 0]) 
-                        cyl(d=8, h=SCREEN_MOUNT_H, anchor = BOTTOM);
+                        cyl(d=6, h=SCREEN_MOUNT_H, anchor = BOTTOM);
                 }
             }
         }
@@ -69,7 +81,7 @@ module base() {
         for (x = [SCREEN_X_OFFSET + SCREEN_CUTOUT.x/2 - SCREEN_MOUNT_X/2, SCREEN_X_OFFSET + SCREEN_CUTOUT.x/2 + SCREEN_MOUNT_X/2]) {
             for (z = [ENC.z/2 - SCREEN_MOUNT_Z/2, ENC.z/2 + SCREEN_MOUNT_Z/2]) {
                 translate([x, -SCREEN_MOUNT_H-epsilon*2, z]) rotate([90, 0, 0]) 
-                    #m3_hole(h=SCREEN_MOUNT_H+WALL/2);
+                    m3_hole(h=SCREEN_MOUNT_H+WALL/2);
             }
         }
         up((ENC.z - SCREEN_CUTOUT.z)/2) right(SCREEN_X_OFFSET) fwd(epsilon)
@@ -114,8 +126,18 @@ module lid() {
     LID = [ENC.x - WALL*2 - LID_CLEARANCE, ENC.y - WALL*2 - LID_CLEARANCE, WALL];
 
     difference() {
-        cuboid(LID, anchor = BOTTOM+LEFT+FRONT);
+        union() {
+            cuboid(LID, anchor = BOTTOM+LEFT+FRONT);
+            // Upstands for magnets
+            for (x=[8, LID.x - 8]) {
+                for (y=[22, LID.y - 32]) {
+                    translate([x, y, WALL - epsilon])
+                        cyl(h=4, d=13, anchor=BOTTOM);
+                }
+            }
+        }
         hex_holes(LID);
+        // Chamfers for screws
         for (x=[4 - LID_CLEARANCE/2, ENC.x - 2*WALL - 4 - LID_CLEARANCE/2]) {
             for (y=[4 - LID_CLEARANCE/2, ENC.y - 2*WALL - 4 - LID_CLEARANCE/2]) {
                 translate([x, y, WALL*1 + epsilon]) {
@@ -124,29 +146,34 @@ module lid() {
                 }
             }
         }
+        // Places for magnets
+        for (x=[8, LID.x - 8]) {
+            for (y=[22, LID.y - 32]) {
+                translate([x, y, WALL + 2 + epsilon])
+                    cyl(h=2, d=10.2, anchor=BOTTOM);
+            }
+        }
     }
 }
-
-
 
 module hex_holes(SIZE, diameter=10) {
     x_spacing = diameter * sqrt(3)/2 + 4; // Hexagonal grid spacing
     y_spacing = diameter; // Hexagonal grid spacing
     x_under = (SIZE.x - 2*diameter) % x_spacing; // Width grid falls short of the enclosure width
-    y_under = (SIZE.y - 2*diameter) % y_spacing; // Height grid falls short of the enclosure height
+    y_under = (SIZE.y) % y_spacing; // Height grid falls short of the enclosure height
     right(x_under/2) back(y_under/2) {
-    for (x=[diameter : x_spacing : SIZE.x - diameter]) {
-        for (y=[diameter : y_spacing*2 : SIZE.y - y_spacing*2]) {
-            translate([x, y, -epsilon])
-                regular_prism(n = 6, h = SIZE.z + 2*epsilon, r = diameter/2, center = false, realign=true);
+        for (x=[diameter : x_spacing : SIZE.x - diameter]) {
+            for (y=[diameter : y_spacing*2 : SIZE.y - y_spacing*2]) {
+                translate([x, y, -epsilon])
+                    regular_prism(n = 6, h = SIZE.z + 2*epsilon, r = diameter/2, center = false, realign=true);
+            }
         }
-    }
-    for (x=[diameter+x_spacing/2 : x_spacing : SIZE.x - diameter - x_spacing/2]) {
-        for (y=[diameter+y_spacing : y_spacing*2 : SIZE.y - diameter]) {
-            translate([x, y, -epsilon])
-                regular_prism(n = 6, h = SIZE.z + 2*epsilon, r = diameter/2, center = false, realign=true);
+        for (x=[diameter+x_spacing/2 : x_spacing : SIZE.x - diameter - x_spacing/2]) {
+            for (y=[diameter+y_spacing : y_spacing*2 : SIZE.y - diameter]) {
+                translate([x, y, -epsilon])
+                    regular_prism(n = 6, h = SIZE.z + 2*epsilon, r = diameter/2, center = false, realign=true);
+            }
         }
-    }
     }
 }
 

@@ -50,6 +50,7 @@ HASensorNumber pc1("ecPc1", HASensorNumber::PrecisionP2);
 HASensorNumber pc4("ecPc4", HASensorNumber::PrecisionP2);
 HASensorNumber pc2_5("ecPc25", HASensorNumber::PrecisionP2);
 HASensorNumber pc10("ecPc10", HASensorNumber::PrecisionP2);
+HABinarySensor passIR("ecPassIR");
 HAButton fanButton("ecFanbutton");
 
 uint64_t rawDataOn[] =  {0xFF20B004CF30FF00, 0x20B004CF30FF00};
@@ -60,6 +61,7 @@ float particle_counts[4] = {NAN, NAN, NAN, NAN};
 float temperature = NAN;
 float relative_humidity = NAN;
 volatile int passive_ir = 0;
+int passive_ir_ha = 0;
 volatile int override_switch = 0;
 volatile int clean_switch = 0;
 unsigned long pir_time = 0;
@@ -212,6 +214,8 @@ void setup() {
   pc4.setName("PC4");
   pc10.setIcon("mdi:air-filter");
   pc10.setName("PC10");
+  passIR.setIcon("mdi:motion-sensor");
+  passIR.setName("Passive IR");
   fanButton.setIcon("mdi:fan");
   fanButton.setName("Fan override");
   fanButton.onCommand(onFanOverride);
@@ -357,12 +361,12 @@ void cleanSwitchInt() {
 // Deal with millis rolling overy ~50 days
 int inTimerange(unsigned long time, unsigned long start, unsigned long end) {
   if (end > start) {
-    return start < time < end;
+    return start <= time && time < end;
   }
 
   // The timer has rolled
   if (start > end) {
-    return time > start || time < end;
+    return time >= start || time < end;
   }
 
   // They're equal
@@ -448,7 +452,7 @@ void loop() {
   output[9] = char(223);
   const char fan_levels[4] = {'-', 'L', 'M', 'H'};
   char fan = fan_levels[ext_fan_speed];
-  if (inTimerange(now, fan_override_start, fan_override_end)) {
+  if (inTimerange(now, fan_override_start, fan_override_end) and ext_fan_speed > 0) {
     fan = '+';
   } else if (!inTimerange(now, pir_time, pir_time + PIR_WINDOW)) {
     fan = '_';
@@ -484,7 +488,7 @@ void loop() {
     target_fan_speed = 3;
   } else if (c1_hyster2 > 10.0) {
     target_fan_speed = 2;
-  } else if (c1_hyster2 > 3.0) {
+  } else if (c1_hyster2 > 5.0) {
     target_fan_speed = 1;
   }
 
@@ -505,16 +509,23 @@ void loop() {
   if (passive_ir) {
     digitalWrite(INDLEDPIN, HIGH);
     Serial.println("Passive IR triggered");
+    passIR.setState(1);
+    passive_ir_ha = 1;
     pir_time = now;
     passive_ir = 0;
     delay(100);
     digitalWrite(INDLEDPIN, LOW);
   }
 
+  if (passive_ir_ha && !inTimerange(now, pir_time, pir_time + 5 * MILLIS_MINUTE)) {
+    passIR.setState(0);
+    passive_ir_ha = 0;
+  }
+
   if (override_switch) {
     override_switch = 0;
     digitalWrite(INDLEDPIN, HIGH);
-    if (inTimerange(now, fan_override_start, fan_override_end)) {
+    if (inTimerange(now, fan_override_start, fan_override_end) && fan_override > 0) {
       lcdMessage("Fan override", "cancel");
       fan_override = 0;
       fan_override_start = now;
